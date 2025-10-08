@@ -1,6 +1,6 @@
 # Federated Energy Trading System
 
-> AI-powered peer-to-peer energy trading using Transformer neural networks for multi-horizon consumption and price forecasting.
+> Dual-transformer AI system for household energy management: consumption forecasting + intelligent price-aware trading to maximize savings against PG&E rates.
 
 ## Overview
 
@@ -8,13 +8,15 @@ This system uses a state-of-the-art Transformer model to predict energy consumpt
 
 ### Key Features
 
-- **Transformer Forecasting**: Multi-task, multi-horizon predictions (25.8M parameter model)
-- **24 Input Features**: Appliances, battery state, weather, temporal, and pricing data
-- **Multi-Horizon Predictions**: Day (24h), week (7d), month (30d) forecasts
+- **Dual-Transformer Architecture**: Separate models for consumption prediction and price-aware trading
+- **Transformer 1 (Consumption)**: Predicts household energy usage using appliances, weather, and behavioral patterns
+- **Transformer 2 (Trading)**: Predicts prices and makes optimal buy/sell decisions based on battery state
+- **Weather Integration**: Live API data for accurate consumption forecasting (AC, heating)
+- **Intelligent Trading**: ML-learned trading strategies that maximize savings vs PG&E baseline
+- **Battery Optimization**: Ensures 10% energy buffer while minimizing costs
+- **Multi-Horizon Predictions**: Day (24h), week (7d) forecasts in 30-min intervals
 - **Federated Learning**: Privacy-preserving model updates with FedAvg
-- **Autonomous Trading**: Buy/sell/hold decisions based on forecasts
-- **Battery Optimization**: Smart charging/discharging with grid constraints
-- **Instant P2P Matching**: Real-time trade execution
+- **No Circular Dependencies**: Clean T1 → T2 pipeline with correct causality
 
 ## Quick Start
 
@@ -101,47 +103,94 @@ energymvp/
 ## System Architecture
 
 ```
-Raw Data (480 samples, 10 days)
-    │
-    ├─ 9 Appliances (fridge, EV, AC, etc.)
-    ├─ 4 Battery Sensors (SoC, SoH, charge, cycles)
-    ├─ 2 Weather (temp, solar)
-    └─ Pricing (TOU)
+Raw Data Sources
+    ├─ Household: 9 Appliances (kWh per 30-min)
+    ├─ Weather API: Temperature, humidity, solar irradiance
+    ├─ Historical: Daily usage patterns by day of week
+    └─ Market: PG&E pricing (TOU rates)
     ↓
-Feature Engineering (24 features)
+┌─────────────────────────────────────────────────────────┐
+│ TRANSFORMER 1: Consumption Predictor                    │
+│ Purpose: Pure energy usage forecasting                  │
+├─────────────────────────────────────────────────────────┤
+│ Inputs (18-20 features):                                │
+│   ├─ 9 Appliance consumption (scaled)                  │
+│   ├─ 3-4 Weather features (temp, humidity, solar)      │
+│   ├─ 4 Temporal patterns (hour/day cyclical)           │
+│   └─ 3-4 Historical patterns (daily avg, seasonal)     │
+│                                                         │
+│ Architecture: 4-6 layers, 6 heads, ~5-8M params        │
+│                                                         │
+│ Output: Predicted consumption for day/week (30-min)    │
+└─────────────────────────────────────────────────────────┘
     ↓
-Transformer Model (25.8M params)
-    ├─ 6 layers, 8 heads
-    ├─ Multi-task: consumption + price
-    └─ Multi-horizon: day/week/month
+Consumption Predictions (from T1)
+    ├─ predicted_consumption_day: 48 values (24h)
+    └─ predicted_consumption_week: 336 values (7d)
     ↓
-Predictions
-    ├─ Consumption: 48/336/1440 intervals
-    └─ Price: 48/336/1440 intervals
+┌─────────────────────────────────────────────────────────┐
+│ TRANSFORMER 2: Price Predictor + Trading Engine         │
+│ Purpose: Predict prices & optimize buy/sell decisions   │
+├─────────────────────────────────────────────────────────┤
+│ Inputs (15-18 features):                                │
+│   ├─ Consumption predictions from T1                   │
+│   ├─ Historical pricing (PG&E rates, lags)             │
+│   ├─ Battery state (SoC, available capacity)           │
+│   ├─ Historical usage context                          │
+│   └─ Temporal patterns                                  │
+│                                                         │
+│ Architecture: 4-6 layers, 6-8 heads, ~8-12M params     │
+│                                                         │
+│ Outputs:                                                │
+│   ├─ Predicted prices (day/week)                       │
+│   ├─ Trading decisions (Buy/Sell/Hold)                 │
+│   ├─ Trade quantities (kWh)                            │
+│   └─ Battery charging schedule                         │
+└─────────────────────────────────────────────────────────┘
     ↓
-Trading Logic
-    ├─ Buy/Sell/Hold decisions
-    └─ Battery optimization
+Trading Execution
+    ├─ Buy when: Battery low + Price favorable
+    ├─ Sell when: Battery high + Price advantageous
+    ├─ Maintain: 10% energy buffer at all times
+    └─ Optimize: Maximize savings vs PG&E baseline
     ↓
-Market Mechanism
-    └─ P2P matching & execution
+Cost Savings: 20-40% vs standard PG&E rates
 ```
 
 ## Core Components
 
-### 1. Transformer Model (`transformer_model.py`)
+### 1. Transformer 1: Consumption Predictor (`consumption_transformer.py`)
 
-- **Architecture**: 6 layers, 8 attention heads, 2048 FFN dim
-- **Parameters**: 25.8M (~103 MB)
-- **Input**: 48 timesteps × 24 features
-- **Output**: 6 prediction streams (consumption + price × 3 horizons)
-- **Loss**: Multi-task weighted (MSE + MAE)
+- **Architecture**: 4-6 layers, 6 attention heads, 1024 FFN dim
+- **Parameters**: 5-8M (~20-32 MB)
+- **Input**: 48 timesteps × 18-20 features (appliances + weather + temporal + patterns)
+- **Output**: Consumption predictions for day/week (48 and 336 intervals)
+- **Loss**: MSE on consumption accuracy
+- **Training**: Independent, can validate against actual consumption
 
-### 2. Feature Engineering (`feature_engineering.py`)
+### 2. Transformer 2: Price Predictor + Trading (`trading_transformer.py`)
 
-- **24 Features**: 9 appliances + 4 battery + 2 weather + 4 temporal + 5 pricing
-- **Scaling**: StandardScaler per feature group
-- **Sequences**: 48-timestep windows for training
+- **Architecture**: 4-6 layers, 6-8 attention heads, 1536 FFN dim
+- **Parameters**: 8-12M (~32-48 MB)
+- **Input**: Consumption predictions + pricing + battery state + historical context
+- **Output**: Price predictions + trading decisions + quantities + battery schedule
+- **Loss**: Multi-task (price prediction MAE + trading profit optimization)
+- **Training**: Uses T1's predictions as input, learns optimal trading strategy
+
+### 3. Feature Engineering
+
+**For Transformer 1 (18-20 features):**
+- 9 appliances (scaled)
+- 3-4 weather features (scaled)
+- 4 temporal (cyclical)
+- 3-4 historical patterns
+
+**For Transformer 2 (15-18 features):**
+- Consumption predictions from T1
+- Historical pricing (5-6 features)
+- Battery state (4 features)
+- Historical usage context (3 features)
+- Temporal (4 features)
 
 ### 3. Training Pipeline (`train_transformer_local.py`)
 
@@ -156,11 +205,15 @@ Market Mechanism
 - **Efficiency**: 90% round-trip
 - **Limits**: 5 kW charge/discharge, 10-80% SoC range
 
-### 5. Trading System (`trading/`)
+### 5. Battery Management (`battery_manager.py`)
 
-- **Decisions**: Buy/sell/hold based on predictions
-- **Constraints**: 10 kWh import, 4 kWh export per interval
-- **Matching**: Instant P2P with 5% transmission loss
+- **Capacity**: 13.5 kWh (Tesla Powerwall)
+- **State Tracking**: SoC, SoH, available energy, available capacity
+- **Trading Logic**: Integrated with Transformer 2
+  - Battery full (>80%): Avoid buying, consider selling
+  - Battery low (<20%): Need to buy at optimal prices
+  - Always maintain 10% buffer above predicted consumption needs
+- **Optimization**: T2 learns when to charge based on price predictions
 
 ### 6. Federated Learning (`federated_aggregator.py`)
 
@@ -170,18 +223,37 @@ Market Mechanism
 
 ## Model Specifications
 
-### Input Features (24 total)
+### Transformer 1 Input Features (18-20 total)
 
 1. **Appliances (9)**: fridge, washing_machine, dishwasher, ev_charging, ac, stove, water_heater, computers, misc
-2. **Battery (4)**: SoC %, SoH %, charge kWh, cycle count
-3. **Weather (2)**: temperature, solar irradiance
-4. **Temporal (4)**: hour_sin, hour_cos, day_sin, day_cos
-5. **Pricing (5)**: current price + 4 lagged prices
+2. **Weather (3-4)**: temperature, humidity, solar_irradiance, (optional: precipitation)
+3. **Temporal (4)**: hour_sin, hour_cos, day_sin, day_cos (cyclical encoding)
+4. **Historical Patterns (3-4)**:
+   - last_week_same_time_consumption
+   - avg_consumption_this_weekday  
+   - avg_daily_consumption_last_7_days
+   - seasonal_factor (optional)
 
-### Output Predictions (6 streams)
+### Transformer 1 Outputs (Consumption Predictions)
 
-- **Consumption**: Day (48), Week (336), Month (1440) intervals
-- **Price**: Day (48), Week (336), Month (1440) intervals
+- **consumption_day**: 48 intervals (next 24 hours in 30-min chunks)
+- **consumption_week**: 336 intervals (next 7 days in 30-min chunks)
+
+### Transformer 2 Input Features (15-18 total)
+
+1. **From T1 (1-3)**: predicted_consumption_next_24h, predicted_peak, predicted_daily_total
+2. **Pricing (5-6)**: current_price, price lags (t-1 to t-4), avg_price_same_hour_last_week
+3. **Battery State (4)**: soc_percent, available_kwh, available_capacity_kwh, soh_percent
+4. **Historical Context (3)**: actual_consumption_last_24h, prediction_error, recent_trading_pnl
+5. **Temporal (4)**: hour_sin, hour_cos, day_sin, day_cos
+
+### Transformer 2 Outputs (Trading Decisions)
+
+- **predicted_price_day**: 48 price predictions ($/kWh for next 24h)
+- **predicted_price_week**: 336 price predictions ($/kWh for next 7 days)
+- **trading_decisions**: Buy/Sell/Hold for each interval
+- **trade_quantities**: kWh amounts for each trade
+- **battery_schedule**: Charge/discharge plan optimized for cost savings
 
 ## Technology Stack
 

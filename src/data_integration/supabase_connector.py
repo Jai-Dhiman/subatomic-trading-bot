@@ -177,17 +177,21 @@ class SupabaseConnector:
         """
         Fetch pricing data from CA electricity market.
         
+        Filters for LMP_TYPE='LMP' (Locational Marginal Price) only.
+        Uses 'Price MWH' column as the primary price field.
+        
         Args:
             start_date: Start date (optional)
             end_date: End date (optional)
             
         Returns:
-            DataFrame with pricing data
+            DataFrame with pricing data (hourly intervals)
         """
         query = (
             self.client
             .table('cabuyingpricehistoryseptember2025')
             .select('*')
+            .eq('LMP_TYPE', 'LMP')  # Filter for LMP type only
             .order('INTERVALSTARTTIME_GMT', desc=False)
         )
         
@@ -206,6 +210,11 @@ class SupabaseConnector:
                 df['INTERVALSTARTTIME_GMT'] = pd.to_datetime(df['INTERVALSTARTTIME_GMT'])
             if 'INTERVALENDTIME_GMT' in df.columns:
                 df['INTERVALENDTIME_GMT'] = pd.to_datetime(df['INTERVALENDTIME_GMT'])
+            
+            # Add price_per_kwh column from 'Price MWH'
+            if 'Price MWH' in df.columns:
+                df['Price KWH'] = df['Price MWH'] / 1000.0  # Convert $/MWh to $/kWh
+            
             return df
         
         return pd.DataFrame()
