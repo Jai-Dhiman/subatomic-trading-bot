@@ -38,3 +38,6 @@ data/output/*
 
 # Environment variables
 .env
+
+*.pt
+/checkpoints

@@ -45,13 +45,35 @@ federated_learning:
   local_epochs: 5
   learning_rate: 0.001
 
-model:
-  lstm_hidden_size: 64
-  lstm_num_layers: 2
-  dropout: 0.2
-  batch_size: 32
-  prediction_horizon_intervals: 6
-  input_sequence_length: 48
+# Transformer model configuration (replaces LSTM)
+transformer:
+  architecture:
+    d_model: 512
+    n_heads: 8
+    n_layers: 6
+    dim_feedforward: 2048
+    dropout: 0.1
+  
+  features:
+    appliances: 9
+    battery: 4
+    weather: 2
+    temporal: 4
+    pricing: 5
+    total: 24
+  
+  horizons:
+    day: 48
+    week: 336
+    month: 1440
+  
+  training:
+    batch_size: 32
+    learning_rate: 0.0001
+    epochs: 50
+    sequence_length: 48
+    patience: 5
+    weight_decay: 0.01
 
 pricing:
   base_price: 0.35

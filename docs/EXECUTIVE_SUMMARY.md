@@ -16,7 +16,7 @@
 
 1. **10 Households ("Nodes")**
    - Each has a battery (13.5 kWh capacity)
-   - Each has an LSTM AI model predicting its energy usage
+   - Each has a Transformer AI model predicting its energy usage
    - Each makes autonomous trading decisions
    - Each learns from its own data (privacy-preserving)
 
@@ -52,9 +52,9 @@ Every 3 hours:
 
 ### Smart Prediction
 
-- **LSTM Neural Network** learns household patterns
-- **Inputs**: Historical usage, weather, time of day
-- **Output**: Accurate 30-minute forecasts
+- **Transformer Neural Network** learns household patterns
+- **Inputs**: 24 features including appliance usage, battery sensors, weather, temporal data, and pricing
+- **Output**: Multi-horizon forecasts (day, week, month) with 30-minute granularity
 
 ### Smart Trading
 
@@ -133,7 +133,7 @@ Only charge/trade what you actually need, avoiding waste.
 
 - **Days 1**: Project setup ✓
 - **Days 2-3**: Generate dummy data (households, weather, pricing)
-- **Days 4-5**: Build node models (LSTM + battery manager)
+- **Days 4-5**: Build node models (Transformer + battery manager)
 - **Days 6-7**: Build central model (price signals + federated learning)
 
 ### Week 2: Integration & Demo
@@ -173,10 +173,12 @@ Only charge/trade what you actually need, avoiding waste.
 ### ML Model
 
 ```
-LSTM (2 layers, 64 hidden units)
-Input: 48 past intervals + weather + time features
-Output: 6 future intervals (3 hours ahead)
-Training: Federated learning with FedAvg
+Transformer (6 layers, 8 attention heads)
+Model dimension: 512
+Input: 24 features (appliance, battery, weather, temporal, pricing)
+Output: Multi-horizon predictions (day, week, month)
+Parameters: ~12 million
+Training: Supervised learning with multi-task loss
 ```
 
 ### Battery Model
@@ -210,8 +212,8 @@ Transmission Loss: 5%
 ### Phase 3: Advanced Features
 
 - Sports/events calendar for demand spikes
-- Transformer models for better predictions
-- Multi-day optimization
+- Enhanced attention mechanisms for better predictions
+- Multi-day optimization with extended horizons
 
 ### Phase 4: Hardware Integration
 
@@ -256,7 +258,7 @@ Transmission Loss: 5%
 
 ### Technical Risks → Solutions
 
-- **LSTM won't converge** → Use simple architecture, plenty of data
+- **Model won't converge** → Use proven architecture, synthetic data for validation
 - **Trading deadlocks** → Central model provides liquidity fallback
 - **Performance issues** → Async execution, optimized loops
 
@@ -357,4 +359,4 @@ source .venv/bin/activate
 
 *"The best time to start was yesterday. The second best time is now."*
 
-Let's build this! 🚀
+Let's build this!

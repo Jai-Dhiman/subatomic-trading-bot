@@ -16,42 +16,68 @@
 
 ## Prediction Model Details
 
-### LSTM Architecture
+### Transformer Architecture
 
 ```python
-Input Features (per 30-min interval):
-  - historical_consumption: [t-48, t-47, ..., t-1]  # Last 24 hours
-  - hour_of_day: [0-23]
-  - day_of_week: [0-6]
-  - temperature: [50-95°F]
-  - solar_irradiance: [0-1000 W/m²]
-  - is_weekend: [0, 1]
+Input Features (24 total features per 30-min interval):
+  Appliance Sensors (7):
+    - fridge_consumption, microwave_consumption, dishwasher_consumption
+    - hvac_consumption, water_heater_consumption, ev_charger_consumption
+    - other_consumption
+  
+  Battery Sensors (3):
+    - battery_charge_kwh, battery_soc, battery_temperature
+  
+  Weather Features (4):
+    - temperature, humidity, cloud_cover, solar_irradiance
+  
+  Temporal Features (6):
+    - hour_sin, hour_cos, day_of_week_sin, day_of_week_cos
+    - month_sin, month_cos
+  
+  Pricing Features (4):
+    - current_price, avg_price_24h, peak_price_today, is_peak_hour
 
 Model Structure:
-  LSTM(input_size=5, hidden_size=64, num_layers=2)
-  -> Dropout(0.2)
-  -> Linear(64, 32)
-  -> ReLU()
-  -> Linear(32, 6)  # Predict next 6 intervals (3 hours)
+  Input Projection: Linear(24, 512)
+  Positional Encoding: Sinusoidal
+  Transformer Encoder: 6 layers × (
+    Multi-Head Attention (8 heads, d_model=512, d_k=64)
+    + Feed-Forward Network (d_ff=2048)
+    + Layer Normalization + Residual Connections
+  )
+  Multi-Task Output Heads:
+    - Day Prediction: Linear(512, 48)    # Next 24 hours
+    - Week Prediction: Linear(512, 336)  # Next 7 days
+    - Month Prediction: Linear(512, 1440) # Next 30 days
+
+Total Parameters: ~12 million
 
 Output:
-  predicted_consumption: [t, t+1, t+2, t+3, t+4, t+5]  # kWh per 30-min
+  predicted_consumption: {
+    'day': [48 intervals],     # Next 24 hours (30-min intervals)
+    'week': [336 intervals],   # Next 7 days (30-min intervals)
+    'month': [1440 intervals]  # Next 30 days (30-min intervals)
+  }
 ```
 
 ### Training Configuration
 
 ```python
-Loss Function: Mean Squared Error (MSE)
-Optimizer: Adam (lr=0.001)
+Loss Function: Multi-Task MSE Loss
+  total_loss = λ_day × MSE(day) + λ_week × MSE(week) + λ_month × MSE(month)
+  where λ_day=1.0, λ_week=0.5, λ_month=0.25
+
+Optimizer: AdamW (lr=0.001, weight_decay=0.01)
 Batch Size: 32
 Epochs: 50 (for initial training)
 Train/Val Split: 80/20
-Early Stopping: patience=5
+Early Stopping: patience=10
+Learning Rate Schedule: ReduceLROnPlateau (factor=0.5, patience=5)
 
 Data Normalization:
-  consumption: MinMaxScaler(feature_range=(0, 1))
-  temperature: MinMaxScaler(feature_range=(0, 1))
-  solar: MinMaxScaler(feature_range=(0, 1))
+  All features: StandardScaler (mean=0, std=1)
+  Applied per feature independently
 ```
 
 ---
@@ -595,11 +621,17 @@ federated_learning:
   learning_rate: 0.001
 
 model:
-  lstm_hidden_size: 64
-  lstm_num_layers: 2
-  dropout: 0.2
+  d_model: 512
+  n_heads: 8
+  n_layers: 6
+  d_ff: 2048
+  dropout: 0.1
   batch_size: 32
-  prediction_horizon_intervals: 6
+  sequence_length: 48
+  prediction_horizons:
+    day: 48
+    week: 336
+    month: 1440
 
 pricing:
   base_price: 0.35
