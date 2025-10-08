@@ -18,46 +18,42 @@ The `train_dual_transformers.ipynb` notebook trains both transformers on Google 
 
 Before running the notebook, you need:
 
-1. **Google Drive** with the project folder uploaded
-2. **Supabase credentials** in a `.env` file
-3. **Google Colab** account (free tier with GPU is sufficient)
+1. **Google Colab** account (free tier with GPU is sufficient)
+2. **Supabase credentials** in a `.env` file on Google Drive
+3. **GitHub repository** access (public repo, no auth needed)
 
 ## Step-by-Step Instructions
 
-### 1. Upload Project to Google Drive
+### 1. Prepare .env File in Google Drive
 
-```bash
-# On your local machine, compress the project
-cd ~/Documents
-zip -r energymvp.zip energymvp/ -x "energymvp/.git/*" -x "energymvp/.venv/*" -x "energymvp/__pycache__/*"
-
-# Upload energymvp.zip to Google Drive at:
-# My Drive/energymvp/
-```
-
-### 2. Prepare .env File
-
-Create a `.env` file in your Google Drive at `/MyDrive/energymvp/.env` with:
+1. Create a folder in Google Drive: `My Drive/energymvp/`
+2. Create a `.env` file inside that folder: `My Drive/energymvp/.env`
+3. Add your Supabase credentials:
 
 ```bash
 SUPABASE_URL=your_supabase_url_here
 SUPABASE_KEY=your_supabase_key_here
 ```
 
-### 3. Open in Google Colab
+**That's it!** The notebook will clone the code from GitHub automatically.
+
+### 2. Open Notebook in Google Colab
 
 1. Go to [Google Colab](https://colab.research.google.com/)
-2. File → Open notebook → Upload
-3. Upload `notebooks/train_dual_transformers.ipynb`
-4. **IMPORTANT**: Enable GPU
+2. File → Open notebook → GitHub
+3. Enter repository: `Jai-Dhiman/subatomic-trading-bot`
+4. Select notebook: `notebooks/train_dual_transformers.ipynb`
+5. **IMPORTANT**: Enable GPU
    - Runtime → Change runtime type → Hardware accelerator → GPU (T4 recommended)
 
-### 4. Run the Notebook
+### 3. Run the Notebook
 
 Execute cells in order:
 
 **Section 1: Setup (5-10 minutes)**
 - Mounts Google Drive
+- **Clones GitHub repository** (https://github.com/Jai-Dhiman/subatomic-trading-bot)
+- Copies `.env` file from Google Drive
 - Installs dependencies with `uv`
 - Verifies GPU is available
 - Imports all project modules
@@ -153,14 +149,20 @@ batch_size=16  # Instead of 32
 
 ### Import Errors
 ```python
-# Make sure project is at /content/drive/MyDrive/energymvp/
-# Check path with: !ls /content/drive/MyDrive/energymvp/src
+# Verify repository was cloned successfully
+!ls /content/subatomic-trading-bot/src
+
+# If clone failed, check GitHub repo is accessible
+!git clone https://github.com/Jai-Dhiman/subatomic-trading-bot.git /content/subatomic-trading-bot
 ```
 
 ### Supabase Connection Failed
 ```python
-# Verify .env file exists and has correct credentials
-# Test with: !cat /content/drive/MyDrive/energymvp/.env
+# Verify .env file exists in Google Drive
+!cat /content/drive/MyDrive/energymvp/.env
+
+# Verify it was copied to project directory
+!cat /content/subatomic-trading-bot/.env
 ```
 
 ## After Training Completes
