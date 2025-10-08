@@ -54,10 +54,50 @@ def generate_battery_trading_for_house(
         print(f"    ⚠ No consumption data for house {house_id}")
         return pd.DataFrame()
     
-    # Calculate ACTUAL hourly consumption from appliance columns
-    # Note: total_consumption_kwh shows daily total, not hourly!
+    # Parse appliance JSON to get ACTUAL hourly consumption
+    # Note: 'Total kWh' in DB is DAILY total (e.g., 31 kWh/day), NOT hourly!
+    # The Appliance_Breakdown_JSON contains the hourly rates per appliance
+    import json
+    
+    if 'Appliance_Breakdown_JSON' in house_data.columns:
+        print(f"    Parsing appliance JSON to extract hourly consumption...")
+        appliance_data = []
+        for idx, row in house_data.iterrows():
+            try:
+                appliances = json.loads(row['Appliance_Breakdown_JSON'])
+                appliance_data.append({
+                    'appliance_ac': appliances.get('A/C', 0),
+                    'appliance_washing_drying': appliances.get('Washing/Drying', 0),
+                    'appliance_fridge': appliances.get('Refrig.', 0),
+                    'appliance_ev_charging': appliances.get('EV Charging', 0),
+                    'appliance_dishwasher': appliances.get('DishWasher', 0),
+                    'appliance_computers': appliances.get('Computers', 0),
+                    'appliance_stove': appliances.get('Stovetop', 0),
+                    'appliance_water_heater': appliances.get('Water Heater', 0),
+                    'appliance_misc': appliances.get('Standby/ Misc.', 0)
+                })
+            except (json.JSONDecodeError, KeyError, TypeError) as e:
+                print(f"      ⚠ Warning: Could not parse appliances for row {idx}: {e}")
+                appliance_data.append({
+                    'appliance_ac': 0, 'appliance_washing_drying': 0, 'appliance_fridge': 0,
+                    'appliance_ev_charging': 0, 'appliance_dishwasher': 0, 'appliance_computers': 0,
+                    'appliance_stove': 0, 'appliance_water_heater': 0, 'appliance_misc': 0
+                })
+        
+        # Add appliance columns to dataframe
+        appliance_df = pd.DataFrame(appliance_data, index=house_data.index)
+        for col in appliance_df.columns:
+            house_data[col] = appliance_df[col]
+    
+    # Sum appliances to get actual hourly consumption
     appliance_cols = [col for col in house_data.columns if col.startswith('appliance_')]
-    house_data['hourly_consumption_kwh'] = house_data[appliance_cols].sum(axis=1)
+    if appliance_cols:
+        house_data['hourly_consumption_kwh'] = house_data[appliance_cols].sum(axis=1)
+        print(f"    ✓ Calculated hourly consumption from {len(appliance_cols)} appliances")
+    else:
+        # Fallback: assume Total kWh is daily, divide by 24 for hourly
+        print(f"    ⚠ No appliance data found, estimating from daily total")
+        house_data['hourly_consumption_kwh'] = house_data.get('total_consumption_kwh', 1.5) / 24.0
     
     # Merge with pricing - use hour/dayofweek pattern matching since dates don't align
     house_data['hour'] = house_data['timestamp'].dt.hour
@@ -92,7 +132,7 @@ def generate_battery_trading_for_house(
     
     # Battery configuration
     battery_state = {
-        'current_charge_kwh': battery_capacity_kwh * 0.70,  # Start at 70% for active trading
+        'current_charge_kwh': battery_capacity_kwh * 0.35,  # Start at 35% - room to buy at low prices!
         'capacity_kwh': battery_capacity_kwh,
         'min_soc': 0.20,   # 20% minimum
         'max_soc': 1.0,    # 100% max per business rules

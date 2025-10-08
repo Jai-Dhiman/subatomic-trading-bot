@@ -185,11 +185,6 @@ def calculate_optimal_trading_decisions(
             decision = 1  # Hold - don't discharge below 20%
             quantity = 0.0
         
-        # HARD RULE: Hold when price < 10% of grid price ($27/MWh)
-        elif price < min_price_kwh:
-            decision = 1  # Hold - price too low
-            quantity = 0.0
-        
         # PRIORITY 1: MUST BUY - We have energy deficit and need to cover consumption
         # Buy regardless of price if we won't have enough for household
         elif energy_deficit > 0.5 and current_soc < max_soc:
@@ -221,6 +216,7 @@ def calculate_optimal_trading_decisions(
         
         # PRIORITY 2: SHOULD SELL - We have excess energy that won't be needed
         # Sell excess even at moderate prices to avoid idle battery
+        # But don't sell at prices below $27/MWh (10% of household price)
         elif energy_surplus > 1.0 and price > min_price_kwh and current_soc > min_soc * 1.3:
             # We have more energy than we'll need
             max_sell = min(max_discharge_energy, available_for_discharge)
