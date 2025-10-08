@@ -1,0 +1,63 @@
+simulation:
+  num_households: 10
+  num_intervals: 48
+  interval_duration_minutes: 30
+  random_seed: 42
+  start_date: "2024-07-15"  # Summer weekday
+
+data_source:
+  type: "supabase"  # Options: "synthetic", "supabase"
+  use_synthetic_fallback: false  # Never fallback to synthetic in production
+  # Credentials come from .env file (SUPABASE_URL, SUPABASE_KEY)
+
+supabase:
+  pricing_table: "cabuyingpricehistoryseptember2025"
+  households_table: "households"  # TODO: Create this table
+  consumption_table: "consumption"  # TODO: Create this table
+  weather_table: "weather"  # TODO: Add later
+  # Expected consumption schema: House # | TimeStamp | Usage (json)
+  # Usage JSON should contain: {appliance1: kwh, appliance2: kwh, ...}
+
+battery:
+  capacity_kwh: 13.5
+  usable_capacity_percent: 0.80
+  efficiency: 0.90
+  max_charge_rate_kw: 5.0
+  max_discharge_rate_kw: 5.0
+  min_reserve_percent: 0.10
+
+trading:
+  max_sell_per_day_kwh: 10.0
+  max_single_trade_kwh: 2.0
+  min_profit_margin: 0.05
+  transmission_efficiency: 0.95
+  price_bounds:
+    min: 0.10
+    max: 1.00
+
+grid_constraints:
+  max_import_per_interval_kwh: 10.0
+  max_export_per_interval_kwh: 4.0
+  interval_duration_minutes: 30
+
+federated_learning:
+  update_frequency_intervals: 6
+  local_epochs: 5
+  learning_rate: 0.001
+
+model:
+  lstm_hidden_size: 64
+  lstm_num_layers: 2
+  dropout: 0.2
+  batch_size: 32
+  prediction_horizon_intervals: 6
+  input_sequence_length: 48
+
+pricing:
+  base_price: 0.35
+  pge_rates:
+    summer_peak: 0.51
+    summer_off_peak: 0.35
+    winter_peak: 0.40
+    winter_off_peak: 0.33
+    super_off_peak: 0.28
