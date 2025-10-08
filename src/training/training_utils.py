@@ -227,7 +227,9 @@ def load_checkpoint(
     Returns:
         checkpoint: Dict with checkpoint information
     """
-    checkpoint = torch.load(path, map_location='cpu')
+    # PyTorch 2.6+ requires weights_only=False to load our checkpoints
+    # This is safe since we trust our own checkpoints
+    checkpoint = torch.load(path, map_location='cpu', weights_only=False)
     
     model.load_state_dict(checkpoint['model_state_dict'])
     
