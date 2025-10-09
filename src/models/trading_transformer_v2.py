@@ -239,23 +239,6 @@ class TradingLossV2(nn.Module):
             self.register_buffer('class_weights_buf', torch.FloatTensor(class_weights))
         else:
             self.register_buffer('class_weights_buf', None)
-        
-        # Initialize CrossEntropyLoss (will be updated when moved to device)
-        self._init_ce_loss()
-    
-    def _init_ce_loss(self):
-        """Initialize CrossEntropyLoss with current class_weights."""
-        if self.class_weights_buf is not None:
-            self.ce = nn.CrossEntropyLoss(weight=self.class_weights_buf)
-        else:
-            self.ce = nn.CrossEntropyLoss()
-    
-    def _apply(self, fn):
-        """Override _apply to recreate CrossEntropyLoss when moving devices."""
-        super()._apply(fn)
-        # Recreate CrossEntropyLoss after moving to new device
-        self._init_ce_loss()
-        return self
     
     def forward(
         self,
@@ -289,10 +272,19 @@ class TradingLossV2(nn.Module):
         
         # 2. Trading decision loss (CrossEntropy) - 10%
         # Only use first decision for next interval
-        decision_loss = self.ce(
-            predictions['trading_decisions'][:, 0, :],
-            targets['decisions'].long()
-        )
+        # Use F.cross_entropy with weight parameter to ensure correct device
+        import torch.nn.functional as F
+        if self.class_weights_buf is not None:
+            decision_loss = F.cross_entropy(
+                predictions['trading_decisions'][:, 0, :],
+                targets['decisions'].long(),
+                weight=self.class_weights_buf
+            )
+        else:
+            decision_loss = F.cross_entropy(
+                predictions['trading_decisions'][:, 0, :],
+                targets['decisions'].long()
+            )
         
         # 3. MARKET PROFIT MAXIMIZATION - 80% (PRIMARY OBJECTIVE)
         # Calculate profit ONLY from market transactions
