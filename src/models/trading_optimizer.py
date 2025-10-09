@@ -34,11 +34,14 @@ def calculate_optimal_trading_decisions_v2(
     """
     Calculate optimal trading decisions with SIMPLE, CLEAR logic.
     
+    Philosophy: Sell aggressively at high prices, trusting that future low prices
+    will allow buying back inventory. Battery is for arbitrage, not for meeting
+    all household consumption (household gets most power from grid).
+    
     Logic Flow (in order):
-    1. If SoC <= 20%: HOLD (safety - never discharge below minimum)
-    2. If price < $20/MWh AND SoC < 90%: BUY aggressively to 90%
-    3. If price > $40/MWh AND SoC > 25%: SELL aggressively to 25%
-    4. Otherwise: HOLD (don't trade at mediocre prices)
+    1. If price < $20/MWh AND SoC < 90%: BUY aggressively to 90%
+    2. If price > $40/MWh AND SoC > 25%: SELL aggressively to 25%
+    3. Otherwise: HOLD (don't trade at mediocre prices)
     
     Args:
         predicted_consumption: (N,) array of predicted consumption (kWh per interval)
@@ -116,16 +119,18 @@ def calculate_optimal_trading_decisions_v2(
         # RULE 3: Hard SELL - Price is excellent, sell excess
         elif price > sell_threshold_kwh and current_soc > min_soc_for_sell:
             # Calculate how much to sell
-            # Sell down to min_soc_for_sell, keeping enough for near-term consumption
-            target_charge = max(
-                capacity_kwh * min_soc_for_sell,
-                current_charge - available_for_discharge  # Don't sell below minimum
-            )
+            # Strategy: Sell aggressively, trusting we'll buy back at future low prices
             
-            # Look ahead for consumption needs
-            future_consumption_4h = np.sum(predicted_consumption[i:min(i+4, n_intervals)])
-            safe_charge = current_charge - future_consumption_4h * 1.10  # 10% buffer
-            target_charge = max(target_charge, safe_charge)
+            # Sell down toward min_soc_for_sell (25%), but not below min_soc (20%)
+            target_charge = capacity_kwh * min_soc_for_sell
+            
+            # Only keep a small buffer for immediate consumption (next 1 hour)
+            # The household gets most power from grid, battery is for arbitrage
+            future_consumption_1h = predicted_consumption[i] if i < n_intervals else 0
+            safe_minimum = capacity_kwh * min_soc + future_consumption_1h
+            
+            # Don't go below safe minimum
+            target_charge = max(target_charge, safe_minimum)
             
             max_sell = min(max_discharge_energy, available_for_discharge)
             quantity = min(max_sell, max(0, current_charge - target_charge))
