@@ -100,9 +100,13 @@ def calculate_optimal_trading_decisions_v2(
         decision = 1  # Hold by default
         quantity = 0.0
         
-        # RULE 1: Hard BUY - Price is excellent, fill battery
-        # This takes priority over everything - even at minimum SoC, we buy if price is good
-        if price < buy_threshold_kwh and current_soc < target_soc_on_buy:
+        # RULE 1: Safety - Never discharge below minimum
+        if current_soc <= min_soc:
+            decision = 1
+            quantity = 0.0
+        
+        # RULE 2: Hard BUY - Price is excellent, fill battery
+        elif price < buy_threshold_kwh and current_soc < target_soc_on_buy:
             # Calculate how much to buy
             target_charge = capacity_kwh * target_soc_on_buy
             max_buy = min(max_charge_energy, available_for_charge)

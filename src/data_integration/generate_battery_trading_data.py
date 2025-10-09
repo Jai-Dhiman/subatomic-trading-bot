@@ -141,7 +141,7 @@ def generate_battery_trading_for_house(
         'efficiency': 0.95
     }
     
-    # Calculate optimal trading decisions using business rules
+    # Calculate optimal trading decisions using business rules (V2 - simplified)
     result = calculate_optimal_trading_decisions(
         predicted_consumption=consumption,
         actual_prices=prices,
@@ -149,15 +149,14 @@ def generate_battery_trading_for_house(
         household_price_kwh=0.27,
         buy_threshold_mwh=20.0,
         sell_threshold_mwh=40.0,
-        min_grid_price_pct=0.10,
-        opportunistic_window=48,  # Look back 48 hours (2 days) for price patterns  
-        opportunistic_buy_percentile=80.0,  # ULTRA AGGRESSIVE: Buy in bottom 80% of prices
-        opportunistic_sell_percentile=20.0  # ULTRA AGGRESSIVE: Sell in top 80% of prices
+        min_soc_for_sell=0.25,  # Need 25% SoC to allow selling
+        target_soc_on_buy=0.90   # Target 90% SoC when buying
     )
     
     # Create battery records
+    # Use battery trajectory from optimizer (it already accounts for consumption)
+    battery_trajectory = result['battery_trajectory']
     battery_records = []
-    current_charge = battery_state['current_charge_kwh']
     soh = 98.0  # State of health
     
     for i in range(len(house_data)):
@@ -168,15 +167,8 @@ def generate_battery_trading_for_house(
         action_map = {0: 'buy', 1: 'hold', 2: 'sell'}
         action = action_map[decision]
         
-        # Update charge based on decision
-        if decision == 0:  # Buy
-            current_charge += quantity * battery_state['efficiency']
-        elif decision == 2:  # Sell
-            current_charge -= quantity
-        
-        # Ensure within bounds
-        current_soc = current_charge / battery_capacity_kwh
-        current_soc = np.clip(current_soc, battery_state['min_soc'], battery_state['max_soc'])
+        # Get SoC from optimizer's trajectory (already includes consumption effects)
+        current_soc = battery_trajectory[i] / 100.0  # Convert from percentage
         current_charge = battery_capacity_kwh * current_soc
         
         available_for_discharge = max(0, current_charge - (battery_capacity_kwh * battery_state['min_soc']))
