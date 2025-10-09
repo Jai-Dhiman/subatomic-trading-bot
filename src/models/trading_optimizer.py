@@ -1,57 +1,48 @@
 """
-Trading Optimizer V2 - Simplified and Fixed
+Trading Optimizer - Clean Business Logic
 
-CORE PRINCIPLE: Buy low, sell high, hold otherwise.
+Buy Rules:
+- Buy when price < $0.02/kWh ($20/MWh) OR
+- Buy when price < $0.27/kWh AND SoC < 33%
 
-Hard Rules (ALWAYS enforced):
-1. NEVER discharge below 20% SoC (safety)
-2. BUY aggressively when price < $20/MWh AND SoC < 90%
-3. SELL aggressively when price > $40/MWh AND SoC > 25%
-4. HOLD when neither condition is met
+Sell Rules:
+- Sell when price > $0.40/kWh ($400/MWh) AND SoC > 20% OR
+- Sell when price > $0.27/kWh AND SoC > 66%
 
-The original version had complex competing logic that caused:
-- Buying at high prices
-- Selling at low prices
-- Holding at extreme prices
-- Over-trading in the middle zone
+Otherwise: Hold
 
-This version is brutally simple: hard thresholds only.
+No complex reserve logic - just simple price/SoC conditions.
 """
 
 import numpy as np
 from typing import Dict
 
-def calculate_optimal_trading_decisions_v2(
+def calculate_optimal_trading_decisions(
     predicted_consumption: np.ndarray,
     actual_prices: np.ndarray,
     battery_state: Dict,
-    household_price_kwh: float = 0.27,
-    buy_threshold_mwh: float = 20.0,
-    sell_threshold_mwh: float = 40.0,
-    min_soc_for_sell: float = 0.25,  # Need 25% to sell
-    target_soc_on_buy: float = 0.90,  # Fill to 90% when buying
+    household_price_kwh: float = 0.027,
+    **kwargs  # Accept any other params for compatibility
 ) -> Dict:
     """
-    Calculate optimal trading decisions with SIMPLE, CLEAR logic.
+    Calculate optimal trading decisions with clean business logic.
     
-    Philosophy: Sell aggressively at high prices, trusting that future low prices
-    will allow buying back inventory. Battery is for arbitrage, not for meeting
-    all household consumption (household gets most power from grid).
+    Buy Conditions:
+    1. Price < $0.02/kWh (= $20/MWh, very cheap) OR
+    2. Price < $0.027/kWh (= $27/MWh) AND SoC < 33% (low charge, need energy)
     
-    Logic Flow (in order):
-    1. If price < $20/MWh AND SoC < 90%: BUY aggressively to 90%
-    2. If price > $40/MWh AND SoC > 25%: SELL aggressively to 25%
-    3. Otherwise: HOLD (don't trade at mediocre prices)
+    Sell Conditions:
+    1. Price > $0.40/kWh (= $40/MWh) AND SoC > 20% (premium pricing) OR  
+    2. Price > $0.027/kWh (= $27/MWh) AND SoC > 66% (high charge, can sell)
+    
+    Otherwise: Hold (don't trade)
     
     Args:
         predicted_consumption: (N,) array of predicted consumption (kWh per interval)
         actual_prices: (N,) array of actual prices ($/kWh)
         battery_state: Dict with battery parameters
-        household_price_kwh: Price we charge households ($/kWh)
-        buy_threshold_mwh: Buy below this price ($/MWh)
-        sell_threshold_mwh: Sell above this price ($/MWh)
-        min_soc_for_sell: Minimum SoC to allow selling (default 0.25 = 25%)
-        target_soc_on_buy: Target SoC when buying (default 0.90 = 90%)
+        household_price_kwh: Price threshold for conditional trades ($/kWh, default 0.027 = $27/MWh)
+        **kwargs: Ignored for compatibility
     
     Returns:
         Dict with optimal_decisions, optimal_quantities, and metrics
@@ -67,9 +58,11 @@ def calculate_optimal_trading_decisions_v2(
     current_charge_kwh = battery_state.get('current_charge_kwh', capacity_kwh * 0.50)
     efficiency = battery_state.get('efficiency', 0.95)
     
-    # Convert thresholds
-    buy_threshold_kwh = buy_threshold_mwh / 1000.0
-    sell_threshold_kwh = sell_threshold_mwh / 1000.0
+    # Trading thresholds (your business logic)
+    cheap_price = 0.02  # Always buy below $0.02/kWh (= $20/MWh)
+    expensive_price = 0.04  # Always sell above $0.04/kWh (= $40/MWh)
+    low_soc_threshold = 0.33  # Below this, buy if price < household rate
+    high_soc_threshold = 0.66  # Above this, sell if price > household rate
     
     # Max energy per 30-min interval
     max_charge_energy = max_charge_rate_kw * 0.5
@@ -103,11 +96,12 @@ def calculate_optimal_trading_decisions_v2(
         decision = 1  # Hold by default
         quantity = 0.0
         
-        # RULE 1: Hard BUY - Price is excellent, fill battery
-        # This takes priority over everything - even at minimum SoC, we buy if price is good
-        if price < buy_threshold_kwh and current_soc < target_soc_on_buy:
-            # Calculate how much to buy
-            target_charge = capacity_kwh * target_soc_on_buy
+        # BUY CONDITIONS
+        should_buy = (price < cheap_price) or (price < household_price_kwh and current_soc < low_soc_threshold)
+        
+        if should_buy and current_soc < max_soc:
+            # Buy up to 90% SoC
+            target_charge = capacity_kwh * 0.90
             max_buy = min(max_charge_energy, available_for_charge)
             quantity = min(max_buy, target_charge - current_charge)
             
@@ -116,22 +110,11 @@ def calculate_optimal_trading_decisions_v2(
                 current_charge += quantity * efficiency
                 buy_costs += quantity * price
         
-        # RULE 3: Hard SELL - Price is excellent, sell excess
-        elif price > sell_threshold_kwh and current_soc > min_soc_for_sell:
-            # Calculate how much to sell
-            # Strategy: Sell aggressively, trusting we'll buy back at future low prices
-            
-            # Sell down toward min_soc_for_sell (25%), but not below min_soc (20%)
-            target_charge = capacity_kwh * min_soc_for_sell
-            
-            # Only keep a small buffer for immediate consumption (next 1 hour)
-            # The household gets most power from grid, battery is for arbitrage
-            future_consumption_1h = predicted_consumption[i] if i < n_intervals else 0
-            safe_minimum = capacity_kwh * min_soc + future_consumption_1h
-            
-            # Don't go below safe minimum
-            target_charge = max(target_charge, safe_minimum)
-            
+        # SELL CONDITIONS (only if not buying)
+        elif (price > expensive_price and current_soc > min_soc) or \
+             (price > household_price_kwh and current_soc > high_soc_threshold):
+            # Sell down to 30% SoC
+            target_charge = capacity_kwh * 0.30
             max_sell = min(max_discharge_energy, available_for_discharge)
             quantity = min(max_sell, max(0, current_charge - target_charge))
             
@@ -140,14 +123,7 @@ def calculate_optimal_trading_decisions_v2(
                 current_charge -= quantity
                 market_revenue += quantity * price
         
-        # RULE 4: HOLD - Price is in middle zone, don't trade
-        else:
-            decision = 1
-            quantity = 0.0
-        
-        # CRITICAL: Subtract consumption AFTER trading decision
-        # This simulates the battery being drained by household consumption
-        # Without this, battery fills once and holds forever
+        # Subtract consumption from battery (serves household load)
         current_charge -= consumption
         
         # Ensure SoC stays within bounds
@@ -174,14 +150,16 @@ def calculate_optimal_trading_decisions_v2(
         'market_profit': market_profit,
         'battery_trajectory': battery_trajectory,
         'price_thresholds': {
-            'buy_below': buy_threshold_kwh,
-            'sell_above': sell_threshold_kwh
+            'cheap_price': cheap_price,
+            'expensive_price': expensive_price,
+            'household_price': household_price_kwh,
+            'low_soc_threshold': low_soc_threshold,
+            'high_soc_threshold': high_soc_threshold
         }
     }
 
 
-# Alias for backward compatibility
-calculate_optimal_trading_decisions = calculate_optimal_trading_decisions_v2
+# No alias needed - this IS the main function
 
 
 if __name__ == "__main__":

@@ -119,15 +119,20 @@ def load_consumption_data(
 def load_pricing_data(
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
-    connector: Optional[SupabaseConnector] = None
+    connector: Optional[SupabaseConnector] = None,
+    interpolate_to_30min: bool = True
 ) -> pd.DataFrame:
     """
     Load pricing data from Supabase.
+    
+    IMPORTANT: Data is filtered for LMP_TYPE='LMP' only in SupabaseConnector.get_pricing_data().
+    Pricing data comes in 1-hour intervals and is converted from $/MWh to $/kWh.
     
     Args:
         start_date: Optional start date filter
         end_date: Optional end date filter
         connector: Optional existing SupabaseConnector
+        interpolate_to_30min: If True, interpolate hourly prices to 30-min intervals (default: True)
         
     Returns:
         DataFrame with columns:
@@ -139,13 +144,13 @@ def load_pricing_data(
     
     print(f"Loading pricing data from Supabase...")
     
-    # Load from cabuyingpricehistoryseptember2025 table
+    # Load from cabuyingpricehistoryseptember2025 table (already filtered for LMP_TYPE='LMP')
     df = connector.get_pricing_data(start_date, end_date)
     
     if df.empty:
         raise ValueError("No pricing data found in cabuyingpricehistoryseptember2025 table")
     
-    print(f"  ✓ Loaded {len(df):,} pricing records")
+    print(f"  ✓ Loaded {len(df):,} hourly pricing records (LMP_TYPE='LMP')")
     
     # Rename and select relevant columns
     df = df.rename(columns={
@@ -162,8 +167,44 @@ def load_pricing_data(
     # Sort by timestamp
     df = df.sort_values('timestamp').reset_index(drop=True)
     
+    # Remove any zero or null prices (data quality check)
+    original_len = len(df)
+    df = df[df['price_per_kwh'].notna()].copy()
+    df = df[df['price_per_kwh'] != 0].copy()
+    
+    if len(df) < original_len:
+        print(f"  ⚠ Removed {original_len - len(df)} records with null/zero prices")
+    
+    if df.empty:
+        raise ValueError("No valid pricing data after filtering null/zero prices")
+    
+    # Interpolate to 30-min intervals if requested
+    if interpolate_to_30min:
+        print(f"  → Interpolating from 1-hour to 30-min intervals...")
+        
+        # Create 30-min timestamp range
+        start_time = df['timestamp'].min()
+        end_time = df['timestamp'].max()
+        new_timestamps = pd.date_range(start=start_time, end=end_time, freq='30T')
+        
+        # Create new dataframe with 30-min intervals
+        df_30min = pd.DataFrame({'timestamp': new_timestamps})
+        
+        # Merge with original hourly data
+        df_30min = df_30min.merge(df, on='timestamp', how='left')
+        
+        # Forward-fill prices (each hourly price applies to both 30-min intervals within that hour)
+        df_30min['price_per_kwh'] = df_30min['price_per_kwh'].fillna(method='ffill')
+        
+        # Handle any remaining NaNs at the beginning
+        df_30min['price_per_kwh'] = df_30min['price_per_kwh'].fillna(method='bfill')
+        
+        df = df_30min.copy()
+        print(f"  ✓ Interpolated to {len(df):,} 30-min intervals")
+    
     print(f"  ✓ Date range: {df['timestamp'].min()} to {df['timestamp'].max()}")
     print(f"  ✓ Price range: ${df['price_per_kwh'].min():.4f} to ${df['price_per_kwh'].max():.4f}")
+    print(f"  ✓ Mean: ${df['price_per_kwh'].mean():.4f}, Median: ${df['price_per_kwh'].median():.4f}")
     
     return df
 

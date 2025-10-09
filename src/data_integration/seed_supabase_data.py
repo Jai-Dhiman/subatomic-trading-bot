@@ -314,7 +314,7 @@ class SyntheticDataGenerator:
             predicted_consumption=consumption,
             actual_prices=prices,
             battery_state=battery_state,
-            household_price_kwh=0.27,
+            household_price_kwh=0.027,  # $27/MWh threshold for conditional trades
             buy_threshold_mwh=20.0,
             sell_threshold_mwh=40.0
         )

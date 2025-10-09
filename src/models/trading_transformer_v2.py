@@ -114,12 +114,15 @@ class TradingTransformer(nn.Module):
         )
         
         # Trade quantity head
+        # Max realistic trade: 10 kWh per 30-min interval (20 kW charge rate × 0.5h)
+        # Battery specs: 10 kWh charge, 8 kWh discharge per 30 minutes
+        self.max_trade_quantity = 10.0  # kWh
         self.quantity_head = nn.Sequential(
             nn.Linear(d_model, dim_feedforward // 2),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(dim_feedforward // 2, prediction_horizon),
-            nn.ReLU()  # Ensure non-negative quantities
+            nn.Sigmoid()  # Output in range [0, 1], then scale to [0, max_quantity]
         )
         
         self._init_weights()
@@ -164,7 +167,8 @@ class TradingTransformer(nn.Module):
         trading_decisions = self.decision_head(last_encoding)
         trading_decisions = trading_decisions.view(-1, self.prediction_horizon, 3)
         
-        trade_quantities = self.quantity_head(last_encoding)
+        # Quantities are in [0, 1] from sigmoid, scale to [0, max_trade_quantity]
+        trade_quantities = self.quantity_head(last_encoding) * self.max_trade_quantity
         
         return {
             'predicted_price': predicted_price,
@@ -210,7 +214,7 @@ class TradingLossV2(nn.Module):
         price_weight: float = 0.10,
         decision_weight: float = 0.10,
         profit_weight: float = 0.80,
-        household_price_kwh: float = 0.27,  # For business metrics only
+        household_price_kwh: float = 0.027,  # For business metrics only (NOT used in loss)
         profit_scale: float = 100.0,  # Scale profit to match other losses
         class_weights: list = None  # [buy_weight, hold_weight, sell_weight]
     ):
@@ -221,7 +225,7 @@ class TradingLossV2(nn.Module):
             price_weight: Weight for price prediction loss (default 0.10)
             decision_weight: Weight for trading decision loss (default 0.10)
             profit_weight: Weight for market profitability (default 0.80)
-            household_price_kwh: Price charged to households (for metrics, not training)
+            household_price_kwh: Price charged to households (for business metrics only, NOT used in loss calculation)
             profit_scale: Multiplier to scale profit loss (default 100.0)
             class_weights: Optional class balancing weights [buy, hold, sell]
         """
@@ -287,27 +291,45 @@ class TradingLossV2(nn.Module):
             )
         
         # 3. MARKET PROFIT MAXIMIZATION - 80% (PRIMARY OBJECTIVE)
-        # Calculate profit ONLY from market transactions
-        pred_decisions = torch.argmax(predictions['trading_decisions'][:, 0, :], dim=1)
+        # Calculate profit using PREDICTED decisions AND quantities
+        # This teaches the model to make profitable trading decisions
+        target_decisions = targets['decisions'].long()
+        target_quantities = targets['quantities']
         pred_quantities = predictions['trade_quantities'][:, 0]
+        pred_decisions = torch.argmax(predictions['trading_decisions'][:, 0, :], dim=1)
         market_prices = targets['price']  # $/kWh
         
         # Market profit calculation (excludes constant household revenue):
         # Buy (0): cost = -quantity * market_price (negative profit)
         # Hold (1): zero market profit/cost
         # Sell (2): revenue = quantity * market_price (positive profit)
+        
+        # Use PREDICTED decisions to calculate profit (model learns decision-making)
+        pred_buy_mask = (pred_decisions == 0)
+        pred_sell_mask = (pred_decisions == 2)
+        
+        # Calculate profit using PREDICTED decisions and quantities
+        # This teaches the model: "make profitable trading decisions"
         market_profit = torch.zeros_like(market_prices)
-        
-        buy_mask = (pred_decisions == 0)
-        sell_mask = (pred_decisions == 2)
-        
-        # Market transactions
-        market_profit[buy_mask] = -pred_quantities[buy_mask] * market_prices[buy_mask]  # Cost
-        market_profit[sell_mask] = pred_quantities[sell_mask] * market_prices[sell_mask]  # Revenue
+        market_profit[pred_buy_mask] = -pred_quantities[pred_buy_mask] * market_prices[pred_buy_mask]  # Cost
+        market_profit[pred_sell_mask] = pred_quantities[pred_sell_mask] * market_prices[pred_sell_mask]  # Revenue
         
         # Convert profit to loss (maximize profit = minimize negative profit)
-        # Scale profit to be comparable to other loss terms
+        # We want to MAXIMIZE profit, which means MINIMIZE (-profit)
+        # Scale up the tiny profit values to match other loss magnitudes:
+        # - Price MAE: ~0.01-0.1 (prices in cents)
+        # - Decision CE: ~1-3 (cross entropy)
+        # - Profit: ~$0.001 per interval → scale by 100 to match CE magnitude
+        # Note: Negative loss when profit is positive is CORRECT for maximization
         profit_loss = -market_profit.mean() * self.profit_scale
+        
+        # Calculate target-based profit for comparison (what optimal would achieve)
+        target_buy_mask = (target_decisions == 0)
+        target_sell_mask = (target_decisions == 2)
+        
+        target_market_profit = torch.zeros_like(market_prices)
+        target_market_profit[target_buy_mask] = -target_quantities[target_buy_mask] * market_prices[target_buy_mask]
+        target_market_profit[target_sell_mask] = target_quantities[target_sell_mask] * market_prices[target_sell_mask]
         
         # 4. Combine losses with weights
         total_loss = (
@@ -320,15 +342,22 @@ class TradingLossV2(nn.Module):
         # These include the constant household revenue for reporting
         actual_consumption = targets.get('consumption', torch.zeros_like(market_prices))
         household_revenue = actual_consumption * self.household_price_kwh
-        business_profit = household_revenue + market_profit
+        
+        # Prediction-based profits (what model achieves, used in loss)
+        predicted_business_profit = household_revenue + market_profit
+        
+        # Target-based profits (what optimal would achieve, for comparison)
+        target_business_profit = household_revenue + target_market_profit
         
         # Build loss dictionary
         loss_dict = {
             'price_mae': price_loss.item(),
             'decision_ce': decision_loss.item(),
             'profit_loss': profit_loss.item(),
-            'market_profit': market_profit.mean().item(),  # Training objective
-            'business_profit': business_profit.mean().item(),  # Business metric
+            'market_profit': target_market_profit.mean().item(),  # Optimal profit (target)
+            'predicted_market_profit': market_profit.mean().item(),  # Model's actual profit (in loss)
+            'business_profit': target_business_profit.mean().item(),  # Optimal business profit
+            'predicted_business_profit': predicted_business_profit.mean().item(),  # Model's business profit
             'household_revenue': household_revenue.mean().item(),  # Reference
             'total': total_loss.item()
         }
@@ -336,12 +365,13 @@ class TradingLossV2(nn.Module):
         return total_loss, loss_dict
 
 
-def calculate_class_weights(decisions: np.ndarray) -> list:
+def calculate_class_weights(decisions: np.ndarray, power: float = 1.0) -> list:
     """
-    Calculate class weights for balanced training.
+    Calculate class weights for balanced training with aggressive reweighting.
     
     Args:
         decisions: Array of decision labels [0=Buy, 1=Hold, 2=Sell]
+        power: Exponent for weight adjustment (>1 = more aggressive, default 1.5)
     
     Returns:
         List of weights [buy_weight, hold_weight, sell_weight]
@@ -349,10 +379,15 @@ def calculate_class_weights(decisions: np.ndarray) -> list:
     unique, counts = np.unique(decisions, return_counts=True)
     total = len(decisions)
     
-    # Inverse frequency weights
+    # Inverse frequency weights with power adjustment
+    # Power > 1 makes rare classes even more important
     weights = np.zeros(3)
     for decision, count in zip(unique, counts):
-        weights[int(decision)] = total / (3 * count)  # Normalized
+        base_weight = total / (3 * count)
+        weights[int(decision)] = base_weight ** power  # Amplify rare class importance
+    
+    # Normalize so weights sum to 3 (avg weight = 1)
+    weights = weights * (3.0 / weights.sum())
     
     return weights.tolist()
 

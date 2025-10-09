@@ -30,6 +30,9 @@ data/output/*
 !data/generated/.gitkeep
 !data/output/.gitkeep
 
+# Ignore local results artifacts
+results/
+
 .DS_Store
 .vscode/
 .idea/

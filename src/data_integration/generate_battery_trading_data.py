@@ -146,7 +146,7 @@ def generate_battery_trading_for_house(
         predicted_consumption=consumption,
         actual_prices=prices,
         battery_state=battery_state,
-        household_price_kwh=0.27,
+        household_price_kwh=0.027,  # $27/MWh threshold for conditional trades
         buy_threshold_mwh=20.0,
         sell_threshold_mwh=40.0,
         min_soc_for_sell=0.25,  # Need 25% SoC to allow selling
