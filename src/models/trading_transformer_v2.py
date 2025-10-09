@@ -234,14 +234,28 @@ class TradingLossV2(nn.Module):
         
         self.mae = nn.L1Loss()
         
-        # Class-balanced CrossEntropy if weights provided
+        # Store class weights as a buffer (automatically moves with .to(device))
         if class_weights is not None:
-            # Register as buffer so it automatically moves with model to GPU/CPU
-            self.register_buffer('class_weights', torch.FloatTensor(class_weights))
-            self.ce = nn.CrossEntropyLoss(weight=self.class_weights)
+            self.register_buffer('class_weights_buf', torch.FloatTensor(class_weights))
         else:
-            self.register_buffer('class_weights', None)
+            self.register_buffer('class_weights_buf', None)
+        
+        # Initialize CrossEntropyLoss (will be updated when moved to device)
+        self._init_ce_loss()
+    
+    def _init_ce_loss(self):
+        """Initialize CrossEntropyLoss with current class_weights."""
+        if self.class_weights_buf is not None:
+            self.ce = nn.CrossEntropyLoss(weight=self.class_weights_buf)
+        else:
             self.ce = nn.CrossEntropyLoss()
+    
+    def _apply(self, fn):
+        """Override _apply to recreate CrossEntropyLoss when moving devices."""
+        super()._apply(fn)
+        # Recreate CrossEntropyLoss after moving to new device
+        self._init_ce_loss()
+        return self
     
     def forward(
         self,
