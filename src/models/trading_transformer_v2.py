@@ -236,9 +236,11 @@ class TradingLossV2(nn.Module):
         
         # Class-balanced CrossEntropy if weights provided
         if class_weights is not None:
-            class_weights_tensor = torch.FloatTensor(class_weights)
-            self.ce = nn.CrossEntropyLoss(weight=class_weights_tensor)
+            # Register as buffer so it automatically moves with model to GPU/CPU
+            self.register_buffer('class_weights', torch.FloatTensor(class_weights))
+            self.ce = nn.CrossEntropyLoss(weight=self.class_weights)
         else:
+            self.register_buffer('class_weights', None)
             self.ce = nn.CrossEntropyLoss()
     
     def forward(
